@@ -13,6 +13,21 @@ from .metrics import MovingAverage
 from .losses import BiVariateGaussian
 import logging
 
+# CUSTOM
+import random
+import string
+from unidecode import unidecode
+
+
+MAX_LEN = 5
+MAX_LINE_PER_IMAGE = 20
+BACKGROUND_COLOR = "#ecdcc4"
+INK_COLOR = "#2b2420"
+
+PATTERN_PUNCT = r"""(\!|\"|#|$|%|&|\'|\(|\)|\*|\+|,|-|\.|\/|:|;|<|=|>|\?|@|\[|\\|\]|\^|_|`|{|\||}|~)"""
+
+DEFAULT_PRIMING_LINE = "everything is fine  "
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 error_handler = logging.FileHandler(filename='errors.log')
@@ -183,21 +198,22 @@ def create_strokes_image(seq, lines=False, shrink_factor=1, suppress_errors=True
 
     if width * height > max_size:
         if suppress_errors:
-            return
+            return # TODO: CUSTOM: changer pour que si on ignore les erreurs, la ligne soit supprimée de la GT
         else:
             msg = f'Resulting image is too large. Width {width}, height {height}. ' \
                   f'This often happens at the beginning of training when model is far from convergence. ' \
                   f'Predictions are too noisy and go far beyond reasonable range of coordinate offsets.'
             raise TooLargeImageError(msg)
 
-    im = Image.new(mode='L', size=(width, height), color=255)
+    #im = Image.new(mode='L', size=(width, height), color=255)
+    im = Image.new(mode='RGBA', size=(width, height), color=BACKGROUND_COLOR)
 
     canvas = ImageDraw.Draw(im)
 
     if lines:
 
         for stroke in get_strokes(x_with_offset, y_with_offset, eos):
-            canvas.line(stroke, width=10, fill=0)
+            canvas.line(stroke, width=15, fill=INK_COLOR, joint="curve") # width=10
     else:
         draw_points(x_with_offset, y_with_offset, canvas)
     return im
@@ -490,54 +506,86 @@ def text_to_script(synthesizer, text, save_path):
     tokenizer = synthesizer.tokenizer
     lines, priming_line = split_into_lines(text)
 
+    # actually choosing a priming line that will give good results:
+    priming_line = DEFAULT_PRIMING_LINE
+
     c = data.transcriptions_to_tensor(tokenizer, [priming_line])
     priming_x = model.sample_means(context=c, steps=700, stochastic=True)
     priming_x = priming_x.unsqueeze(0)
 
-    pil_images = []
-    for line in lines:
-        s = data.transcriptions_to_tensor(tokenizer, [line])
-        sample = model.sample_primed(priming_x, c, s, steps=1500)
-        points_seq = sample.cpu() * sd + mu
-        im = create_strokes_image(points_seq, lines=True, shrink_factor=2, suppress_errors=False)
-        pil_images.append(im)
-        print(f'Generated handwriting for a line: "{line}"')
+    if len(lines) > MAX_LINE_PER_IMAGE:
+        x_prime = MAX_LINE_PER_IMAGE + 1
+        line_groups = [lines[x:x+x_prime] for x in range(0, len(lines), x_prime)]
+    else:
+        line_groups = [lines]
+    line_groups = [group for group in line_groups if len(group) > 0]
 
-    image = merge_images(*pil_images)
-    image.save(save_path)
+    for i, lines in enumerate(line_groups):
+        drawn_lines = []
+        pil_images = []
+        for line in lines:
+            if line:
+                s = data.transcriptions_to_tensor(tokenizer, [line])
+                sample = model.sample_primed(priming_x, c, s, steps=1500)
+                points_seq = sample.cpu() * sd + mu
+                im = create_strokes_image(points_seq, lines=True, shrink_factor=2, suppress_errors=True)
+                if im:
+                    pil_images.append(im)
+                    drawn_lines.append(line)            
+                    print(f'Generated handwriting for a line: "{line}"')
+                else:
+                    print(f'Failed to generate a line for: "{line}"')
+
+        if pil_images:
+            image = merge_images(*pil_images)
+            image.save(save_path.replace(".png", f"_{i+1}.png"))
+            print("...saved to a new image...")
+
+            with open(save_path.replace(".png", f"_{i+1}.txt"), "w", encoding="utf8") as fh:
+                fh.write("\n".join(lines))
 
 
 def split_into_lines(text):
+    text.replace("\n", " ")
     words = text.split(' ')
 
-    sentinel = ' '
+    line = []
+    all_lines = []
+    max_rand = random.randint(4, MAX_LEN)
 
-    lines = []
-    line_words = []
-    for i, word in enumerate(words):
-        line_words.append(word.strip().replace('\n', ''))
-        if (i + 1) % 5 == 0:
-            line = ' '.join(line_words) + sentinel + sentinel
-            lines.append(line)
-            line_words = []
+    for word in words:
+        line.append(word.strip())
+        if len(line) == max_rand:
+            line = " ".join(line)
+            # we noticed that the model makes more garble when punct signs are stuck to other letters
+            line = re.sub(PATTERN_PUNCT, r' \1 ', line)
+            line = re.sub(" {2,}", " ", line)
+            all_lines.append(line.strip() + "  ")
+            line = []
+            max_rand = random.randint(4, MAX_LEN)
+    if line:
+        all_lines.append(' '.join(line))
 
-    if line_words:
-        lines.append(' '.join(line_words))
-
-    priming_line = ' '.join(words[:2]) + sentinel + sentinel
-    print(f'"{priming_line}"')
-    return lines, priming_line
+    priming_line = ' '.join(words[:4])
+    priming_line = re.sub(PATTERN_PUNCT, r' \1 ', priming_line)
+    priming_line = priming_line.strip() + "  "
+    #print(f'Priming line will be: "{priming_line}"')
+    
+    return all_lines, priming_line
 
 
 def merge_images(*images):
-    max_width = max([im.width for im in images])
-    combined_height = sum(im.height for im in images)
-    image = Image.new(mode='L', size=(max_width, combined_height), color=255)
+    max_width = int(max([im.width for im in images]) + 300)
+    combined_height = int(sum(im.height for im in images) + 120)
 
-    prev_height = 0
+    #image = Image.new(mode='L', size=(max_width, combined_height), color=255)
+    image = Image.new(mode='RGBA', size=(max_width, combined_height), color=BACKGROUND_COLOR)
+
+    prev_height = 100
+    lat_offset = 100
 
     for im in images:
-        image.paste(im, (0, prev_height))
+        image.paste(im, (lat_offset, prev_height))
         prev_height += im.height
 
     return image
@@ -606,3 +654,31 @@ def compute_validation_metrics(trainer, dataset, batch_size, metrics, verbose=Fa
                     print(f'\rProcessed {i + 1} / {batches} batches', end='')
                 if (i + 1) == batches:
                     print()
+
+# CUSTOM
+def normalize_text(text, synthesizer):
+    """Remove characters unknown to the synthetizer from the input string.
+    
+    The goal of the normalizer is to reduce the risks of generating
+    what Alex Graves calls "garbled letters"."""
+    # remove accents and special diacritics
+    text = unidecode(text) 
+    text = text.replace("\n", " ")
+    text = text.replace("_", "-")
+    text = re.sub("- ?-", "-", text)
+    # basic ascii chars that are unknown to the synthetizer:
+    ascii_ref = string.digits + string.ascii_letters + string.punctuation + " "
+    unk_ascii = [c for c in  ascii_ref if c not in synthesizer.tokenizer._charset] 
+    # building a correspondance table to limit loss of information
+    corresp = {c:" " for c in unk_ascii}
+    for k in corresp.keys():
+        if k.isdigit():
+            corresp[k] = "8" # could be any other digit 
+        elif k in string.ascii_uppercase:
+            corresp[k] = k.lower()
+    # apply correspondance table
+    for k in corresp:
+        text = text.replace(k, corresp[k])
+    
+    text = re.sub(" {2,}", " ", text)
+    return text

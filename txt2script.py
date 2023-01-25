@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import re
 import os
 import argparse
@@ -5,7 +7,6 @@ import torch
 
 from handwriting_synthesis import utils
 from handwriting_synthesis.sampling import HandwritingSynthesizer
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Converts a text file into a handwriting page.')
@@ -31,7 +32,10 @@ if __name__ == '__main__':
     device = torch.device("cpu")
     synthesizer = HandwritingSynthesizer.load(args.model_path, device, args.bias)
 
-    with open(args.input_path) as f:
+    with open(args.input_path, encoding="utf8") as f:
         text = f.read()
+
+    # CUSTOM
+    text = utils.normalize_text(text, synthesizer)
 
     utils.text_to_script(synthesizer, text, output_path)
