@@ -24,9 +24,9 @@ MAX_LINE_PER_IMAGE = 20
 BACKGROUND_COLOR = "#ecdcc4"
 INK_COLOR = "#2b2420"
 
-PATTERN_PUNCT = r"""(\!|\"|#|$|%|&|\'|\(|\)|\*|\+|,|-|\.|\/|:|;|<|=|>|\?|@|\[|\\|\]|\^|_|`|{|\||}|~)"""
+PATTERN_PUNCT = r"""(\!|\"|#|$|%|&|\'|\(|\)|\*|\+|-|\/|:|;|<|=|>|\?|@|\[|\\|\]|\^|_|`|{|\||}|~)"""
 
-DEFAULT_PRIMING_LINE = "everything is fine  "
+DEFAULT_PRIMING_LINE = " everything is fine  "
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -525,7 +525,7 @@ def text_to_script(synthesizer, text, save_path):
         pil_images = []
         for line in lines:
             if line:
-                s = data.transcriptions_to_tensor(tokenizer, [line])
+                s = data.transcriptions_to_tensor(tokenizer, ["  " + line + "  "])
                 sample = model.sample_primed(priming_x, c, s, steps=1500)
                 points_seq = sample.cpu() * sd + mu
                 im = create_strokes_image(points_seq, lines=True, shrink_factor=2, suppress_errors=True)
@@ -562,7 +562,7 @@ def split_into_lines(text):
             line = re.sub(" {2,}", " ", line)
             all_lines.append(line.strip() + "  ")
             line = []
-            max_rand = random.randint(4, MAX_LEN)
+            max_rand = random.randint(3, MAX_LEN)
     if line:
         all_lines.append(' '.join(line))
 

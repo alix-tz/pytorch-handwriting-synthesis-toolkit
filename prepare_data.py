@@ -3,6 +3,8 @@ import os
 from handwriting_synthesis import data
 from handwriting_synthesis.data_providers import registry
 
+import h5py
+
 
 def calculate_max_length(provider_class, *args):
     provider = provider_class(*args)
