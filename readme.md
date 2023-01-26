@@ -133,6 +133,7 @@ Download the data set and unzip it into iam_ondb_home folder. The layout of the 
 │   └── original
 └── original-xml-part
     └── original
+└── writers.xml
 ```
 
 ## Quickstart
