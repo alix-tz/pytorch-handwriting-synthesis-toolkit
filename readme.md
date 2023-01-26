@@ -132,7 +132,7 @@ Download the data set and unzip it into iam_ondb_home folder. The layout of the 
 ├── original-xml-all
 │   └── original
 └── original-xml-part
-    └── original
+│   └── original
 └── writers.xml
 ```
 
